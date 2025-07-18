@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dataset-pipeline
+spec:
+  template:
+    metadata:
+        name: dataset-pipeline
+    spec:
+      containers:
+        - name: dataset-pipeline
+          image: wpunter/dataset-pipeline:latest
+          imagePullPolicy: Always
+          volumeMounts:
+            - mountPath: /app/data
+              name: wieger-01
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+            runAsGroup: 70
+            runAsNonRoot: true
+            runAsUser: 70
+          resources:
+            limits:
+              cpu: 500m
+              memory: 300Gi
+            requests:
+              cpu: 500m
+              memory: 300Gi
+      restartPolicy: Never
+      volumes:
+        - name: wieger-01
+          persistentVolumeClaim:
+            claimName: wieger-01
+      imagePullSecrets:
+      - name: dockerhub-secret
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+  backoffLimit: 4
