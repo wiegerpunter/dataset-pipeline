@@ -16,9 +16,10 @@ public class CreateDatasetAndQueries {
 
         SyntheticDataset residu = new SyntheticDataset(config);
         for (double p : config.perc) {
-            System.out.printf("\rGenerating dataset with %.1f%% noise", p * 100);
+            System.out.printf("Generating dataset with %.1f%% noise", p * 100);
             residu.synthDevDataGenerator(p, config.sizeFactor, config.zipfAlpha);
             if (p == 0) {
+                System.out.println("Generating queries for dataset with no noise");
                 residu.synthDevQueryGenerator(p, config.sizeFactor, config.zipfAlpha);
             }
         }

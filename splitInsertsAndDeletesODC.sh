@@ -2,10 +2,10 @@
 
 # Usage: ./phase1.sh <input_csv_file>
 # Root folder where synthFromDisk resides
-CONFIG_FILE="./config.json"
-sizeFactor=$(jq -r '.sizeFactor | tostring' "$CONFIG_FILE")
+#CONFIG_FILE="/app/split/config.json"
+#sizeFactor=$(jq -r '.sizeFactor | tostring' "$CONFIG_FILE")
 
-ROOT_FOLDER="./app/data/input/data/synthFromDisk/${sizeFactor}.0"
+ROOT_FOLDER="./app/data/input/data/synthFromDisk/23.0"
 echo "Using ROOT_FOLDER: $ROOT_FOLDER"
 
 
