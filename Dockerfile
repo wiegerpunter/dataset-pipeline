@@ -20,13 +20,14 @@ COPY splitInsertsAndDeletesODC.sh /app/split/splitInsertsAndDeletesODC.sh
 
 RUN chmod +x /app/split/splitInsertsAndDeletesODC.sh
 
+#echo 'Step 1: Create dataset and queries' &&\
+ #java -cp app.jar org.CreateDatasetAndQueries /app/config/config.json &&\
+ #echo 'Step 2: Split inserts and deletes' &&\
+ #/app/split/splitInsertsAndDeletesODC.sh &&\
+
 CMD bash -c "\
-echo 'Step 1: Create dataset and queries' &&\
-java -cp app.jar org.CreateDatasetAndQueries /app/config/config.json &&\
-echo 'Step 2: Split inserts and deletes' &&\
-/app/split/splitInsertsAndDeletesODC.sh &&\
 echo 'Step 3: Mix into final file' &&\
-java -cp app.jar org.MixInMemory /app/config/config.json &&\
+java -Xmx250G -cp app.jar org.MixInMemory /app/config/config.json &&\
 echo 'Done!'"
 
 #
