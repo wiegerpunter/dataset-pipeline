@@ -10,14 +10,18 @@ import java.util.regex.Pattern;
 
 public class MixInMemory {
 
-    ArrayList<long[]> allRecords;
-    boolean[] hasBeenSeen;
-    HashSet<Long> seen;
+//    ArrayList<long[]> allRecords;
+    ArrayList<Integer> allRecordsId; // Not used, but kept for reference
+//    boolean[] hasBeenSeen;
+    HashSet<Integer> seen;
 
     public MixInMemory(Config config) throws IOException {
-        System.out.println(config.readFolder);
         double sizeFactor = config.sizeFactor;
-        File synthRootFolder = new File(config.readFolder + "input/data/synthFromDisk/" + sizeFactor +"/99.0");
+        String synthRootFolderName = config.readFolder + "input/synthFromDisk/" + sizeFactor;
+        System.out.println("synthRootFolder: " + synthRootFolderName);
+//        synthRootFolderName = synthRootFolderName.replace("./", ""); // Remove leading "./" if present
+
+        File synthRootFolder = new File(synthRootFolderName);
         if (!synthRootFolder.exists() || !synthRootFolder.isDirectory()) {
             throw new IOException("Synth folder does not exist: " + synthRootFolder.getAbsolutePath());
         }
@@ -32,6 +36,7 @@ public class MixInMemory {
     }
 
     private void processFolderRecursively(File folder, Pattern pattern) throws IOException {
+        System.out.println("Processing " + folder.getAbsolutePath());
         File[] files = folder.listFiles();
         if (files == null) return;
 
@@ -61,38 +66,54 @@ public class MixInMemory {
             }
 
             boolean hasInserts = new File(insertFile).exists();
-            System.out.printf("\rProcessing folder: " + folder.getAbsolutePath());
-            System.out.printf("\rResidu: " + residuFile);
+            System.out.printf("Processing folder: " + folder.getAbsolutePath());
+            System.out.printf("Residu: " + residuFile);
             if (hasInserts) System.out.println("Inserts: " + insertFile);
 
             // Create final stream file in parent folder
             String finalStreamFile = new File(folder.getParent(), "final_stream_spread_out" + suffix + ".csv").getAbsolutePath();
-
+            finalStreamFile = finalStreamFile.replace("./", ""); // Remove leading "./" if present
+            System.out.println("Final stream file: " + finalStreamFile);
             mixFiles(residuFile, hasInserts ? insertFile : null, finalStreamFile);
         }
     }
 
     private void mixFiles(String residuFile, String insertFile, String finalStreamFile) throws IOException {
         // Estimate initial size to reduce resizing (arbitrary reasonable defaults)
-        this.allRecords = new ArrayList<>(100_000);
-        ArrayList<long[]> inserts = new ArrayList<>();
+//        this.allRecords = new ArrayList<>(100_000);
+        this.allRecordsId = new ArrayList<>(100_000); // Not used, but kept for reference
+        ArrayList<int[]> inserts = new ArrayList<>();
+        ArrayList<int[]> residu = new ArrayList<>();
 
         if (insertFile != null) {
             readDataset(insertFile, inserts, true);
             seen = new HashSet<>(inserts.size()); // Load factor consideration
-            allRecords.addAll(inserts);
-            allRecords.addAll(inserts); // Add noise twice
+            putInList(allRecordsId, inserts);
+            putInList(allRecordsId, inserts);
         }
 
-        readDataset(residuFile, allRecords, false);
-        Collections.shuffle(allRecords);
+        int maxResiduId = readDataset(residuFile, residu, false);
+        putInList(allRecordsId, residu);
+
+        Collections.shuffle(allRecordsId);
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(finalStreamFile))) {
             // Static header - no need to build this per iteration
             writer.write("id,attr1,attr2,attr3,attr4,attr5,attr6,attr7,attr8,attr9,sign\n");
 
             StringBuilder sb = new StringBuilder(256); // Reuse the same StringBuilder
-            for (long[] record : allRecords) {
+            for (int rid : allRecordsId) {
+                int[] record;
+                if (rid <= maxResiduId) {
+                    record = residu.get(rid);
+                } else {
+                    record = inserts.get(rid - maxResiduId - 1); // Adjust index for inserts
+                }
+                //test:
+                if (record[0] != rid) {
+                    throw new IllegalStateException("Record ID mismatch: expected " + rid + ", got " + record[0]);
+                }
+
                 sb.setLength(0); // Reset the StringBuilder
 
                 for (int i = 0; i < record.length - 1; i++) {
@@ -103,14 +124,13 @@ public class MixInMemory {
                 if (sign == -2) {
                     sb.append("1");
                 } else if (sign == -3) {
-                    long id = record[0];
-                    if (seen.add(id)) { // add returns true if id was not present
+                    if (seen.add(rid)) { // add returns true if id was not present
                         sb.append("1");
                     } else {
                         sb.append("-1");
-                        if (!seen.remove(id)) {
-                            throw new IllegalStateException("ID " + id + " was not in seen set but was marked as delete.");
-                        }; // Remove from seen if it was already present
+                        if (!seen.remove(rid)) {
+                            throw new IllegalStateException("ID " + rid + " was not in seen set but was marked as delete.");
+                        } // Remove from seen if it was already present
                     }
                 } else {
                     throw new IllegalArgumentException("Unexpected sign value: " + sign);
@@ -125,6 +145,15 @@ public class MixInMemory {
                 throw new IllegalStateException("Seen set should be empty after processing all records.");
             }
 
+        }
+    }
+
+    private void putInList(ArrayList<Integer> allRecordsId, ArrayList<int[]> residu) {
+        for (int[] record : residu) {
+            if (record.length < 1) {
+                throw new IllegalArgumentException("Record must have at least one element (ID).");
+            }
+            allRecordsId.add(record[0]); // Assuming ID is the first element
         }
     }
 
@@ -171,41 +200,59 @@ public class MixInMemory {
 
 
 
-    public void readDataset(String filePath, ArrayList<long[]> dataset, boolean isNoise) throws IOException {
+    public int readDataset(String filePath, ArrayList<int[]> dataset, boolean isNoise) throws IOException {
         BufferedReader reader = new BufferedReader(new FileReader(filePath));
+        int maxId = 0; // Track max ID for inserts
         reader.readLine(); // Skip header line
         String line;
+        boolean firstIsSet = false; // Track if first ID is set
+        int[] dataPoint = new int[0];
         while ((line = reader.readLine()) != null) {
             int length = line.length();
-            int partStart = 0;
-            int partIndex = 0;
-
-            // Count commas to know array size
-            int commas = 0;
+            int commaCount = 0;
             for (int i = 0; i < length; i++) {
-                if (line.charAt(i) == ',') commas++;
+                if (line.charAt(i) == ',') commaCount++;
             }
 
-            long[] dataPoint = new long[commas + 1]; // Last column replaced by -2/-3
+            if (!firstIsSet) {
+                dataPoint = new int[commaCount + 1]; // Last column replaced by -2/-3
+            }
 
+            int partStart = 0;
+            int partIndex = 0;
             for (int i = 0; i < length; i++) {
-                if (line.charAt(i) == ',' || i == length - 1) {
-                    int partEnd = (line.charAt(i) == ',') ? i : i + 1;
-                    if (partIndex < commas) { // Skip last column (sign replaced)
-                        String numberStr = line.substring(partStart, partEnd);
-                        dataPoint[partIndex] = Long.parseLong(numberStr);
+                if (i == length - 1 || line.charAt(i) == ',') {
+//                    int partEnd = (line.charAt(i) == ',') ? i : i + 1;
+                    if (partIndex < commaCount) { // Ignore last column
+                        dataPoint[partIndex] = parseIntFast(line, partStart, i);
                         partIndex++;
                     }
                     partStart = i + 1;
                 }
             }
+//
+//            for (int i = 0; i < length; i++) {
+//                if (line.charAt(i) == ',' || i == length - 1) {
+//                    int partEnd = (line.charAt(i) == ',') ? i : i + 1;
+//                    if (partIndex < commas) { // Skip last column (sign replaced)
+//                        String numberStr = line.substring(partStart, partEnd);
+//                        dataPoint[partIndex] = Long.parseLong(numberStr);
+//                        partIndex++;
+//                    }
+//                    partStart = i + 1;
+//                }
+//            }
 
             // Set last element manually based on isNoise
             dataPoint[dataPoint.length - 1] = isNoise ? -3 : -2;
+            if (!isNoise && dataPoint[0] > maxId) {
+                maxId = (int) dataPoint[0]; // Update max ID for residu
+            }
 
             dataset.add(dataPoint);
         }
         reader.close();
+        return maxId;
 //        while (line != null) {
 //            parts = line.split(",");
 //            long[] dataPoint = new long[parts.length]; // don't need sign.
@@ -222,6 +269,41 @@ public class MixInMemory {
 //        }
 //        reader.close();
     }
+
+    private long parseLongFast(CharSequence s, int start, int end) {
+        long result = 0;
+        boolean negative = false;
+        int i = start;
+
+        if (s.charAt(i) == '-') {
+            negative = true;
+            i++;
+        }
+
+        while (i < end) {
+            result = result * 10 + (s.charAt(i++) - '0');
+        }
+
+        return negative ? -result : result;
+    }
+
+    private int parseIntFast(CharSequence s, int start, int end) {
+        int result = 0;
+        boolean negative = false;
+        int i = start;
+
+        if (s.charAt(i) == '-') {
+            negative = true;
+            i++;
+        }
+
+        while (i < end) {
+            result = result * 10 + (s.charAt(i++) - '0');
+        }
+
+        return negative ? -result : result;
+    }
+
 
     public static void main(String[] args) throws IOException {
         String jsonFilePath = args[0];

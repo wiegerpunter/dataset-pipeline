@@ -5,14 +5,13 @@
 #CONFIG_FILE="/app/split/config.json"
 #sizeFactor=$(jq -r '.sizeFactor | tostring' "$CONFIG_FILE")
 
-ROOT_FOLDER="./app/data/input/data/synthFromDisk/23.0"
+ROOT_FOLDER="./input/synthFromDisk"
 echo "Using ROOT_FOLDER: $ROOT_FOLDER"
-
 
 set -e
 
 # Loop over all relevant CSV files recursively
-find "$ROOT_FOLDER" -mindepth 2 -maxdepth 2 -type f -name "*.csv" | while read -r INPUT_FILE; do
+find "$ROOT_FOLDER" -mindepth 3 -maxdepth 3 -type f -name "*.csv" | while read -r INPUT_FILE; do
 
 #if [ $# -ne 1 ]; then
 #    echo "Usage: $0 <input_csv_file>"
