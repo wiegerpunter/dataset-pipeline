@@ -13,6 +13,9 @@ public class MixInMemoryDB {
     ArrayList<Integer> allRecordsId;
     HashSet<Integer> seen;
     double sizeFactor;
+    private final Map<Integer, int[]> insertRecordCache = new HashMap<>();
+    private final int BATCH_SIZE = 100000;
+
 
     public MixInMemoryDB(Config config) throws IOException, SQLException {
         sizeFactor = config.sizeFactor;
@@ -94,50 +97,88 @@ public class MixInMemoryDB {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(finalStreamFile))) {
             writer.write("id,attr1,attr2,attr3,attr4,attr5,attr6,attr7,attr8,attr9,sign\n");
             StringBuilder sb = new StringBuilder(256);
+//
+//            int progress = 0;
+//            for (int rid : allRecordsId) {
+//                progress+=1;
+//                if (progress % 10000 == 0) {
+//                    System.out.printf("\rProcessed %d / %d records.", progress, allRecordsId.size());
+//                }
+//                int[] record;
+//                if (rid <= maxResiduId) {
+//                    record = residu.get(rid);
+//                    if (record[0] != rid + 1) {
+//                        throw new IllegalStateException("Record ID mismatch: expected " + (rid + 1) + ", got " + record[0]);
+//                    }
+//                } else {
+//                    record = fetchInsertRecordFromDB(rid);
+//                    if (record[0] != rid) {
+//                        throw new IllegalStateException("Record ID mismatch: expected " + rid + ", got " + record[0]);
+//                    }
+//                }
+//
+//                sb.setLength(0);
+//                for (int i = 0; i < record.length - 1; i++) {
+//                    sb.append(record[i]).append(',');
+//                }
+//
+//                long sign = record[record.length - 1];
+//                if (sign == -2) {
+//                    sb.append("1");
+//                } else if (sign == 1) {
+//                    if (seen.add(rid)) {
+//                        sb.append("1");
+//                    } else {
+//                        sb.append("-1");
+//                        if (!seen.remove(rid)) {
+//                            throw new IllegalStateException("ID " + rid + " was not in seen set but was marked as delete.");
+//                        }
+//                    }
+//                } else {
+//                    throw new IllegalArgumentException("Unexpected sign value: " + sign);
+//                }
+//
+//                writer.write(sb.toString());
+//                writer.newLine();
+//            }
 
             int progress = 0;
-            for (int rid : allRecordsId) {
-                progress+=1;
-                if (progress % 10000 == 0) {
-                    System.out.printf("\rProcessed %d / %d records.", progress, allRecordsId.size());
-                }
-                int[] record;
-                if (rid <= maxResiduId) {
-                    record = residu.get(rid);
-                    if (record[0] != rid + 1) {
-                        throw new IllegalStateException("Record ID mismatch: expected " + (rid + 1) + ", got " + record[0]);
-                    }
-                } else {
-                    record = fetchInsertRecordFromDB(rid);
-                    if (record[0] != rid) {
-                        throw new IllegalStateException("Record ID mismatch: expected " + rid + ", got " + record[0]);
-                    }
+            List<Integer> processingBuffer = new ArrayList<>(BATCH_SIZE);
+            Set<Integer> insertIdsToFetch = new HashSet<>();
+
+            for (int i = 0; i < allRecordsId.size(); i++) {
+                int rid = allRecordsId.get(i);
+                processingBuffer.add(rid);
+
+                if (rid > maxResiduId && !insertRecordCache.containsKey(rid)) {
+                    insertIdsToFetch.add(rid);
                 }
 
-                sb.setLength(0);
-                for (int i = 0; i < record.length - 1; i++) {
-                    sb.append(record[i]).append(',');
-                }
+                if (processingBuffer.size() >= BATCH_SIZE || i == allRecordsId.size() - 1) {
+                    // Fetch all needed insert records
+                    if (!insertIdsToFetch.isEmpty()) {
+                        batchFetchInsertRecords(new ArrayList<>(insertIdsToFetch));
+                        insertIdsToFetch.clear();
+                    }
 
-                long sign = record[record.length - 1];
-                if (sign == -2) {
-                    sb.append("1");
-                } else if (sign == 1) {
-                    if (seen.add(rid)) {
-                        sb.append("1");
-                    } else {
-                        sb.append("-1");
-                        if (!seen.remove(rid)) {
-                            throw new IllegalStateException("ID " + rid + " was not in seen set but was marked as delete.");
+                    // Process everything in exact order
+                    for (int ridInBuffer : processingBuffer) {
+                        if (progress % 100000 == 0) {
+                            System.out.printf("\rProcessed %d / %d records.", progress, allRecordsId.size());
+                        }
+                        progress++;
+
+                        if (ridInBuffer <= maxResiduId) {
+                            writeResiduRecord(writer, sb, residu, ridInBuffer);
+                        } else {
+                            writeInsertRecord(writer, sb, ridInBuffer);
                         }
                     }
-                } else {
-                    throw new IllegalArgumentException("Unexpected sign value: " + sign);
+                    processingBuffer.clear();
                 }
-
-                writer.write(sb.toString());
-                writer.newLine();
             }
+
+
 
             if (seen != null && !seen.isEmpty()) {
                 throw new IllegalStateException("Seen set should be empty after processing all records.");
@@ -180,6 +221,35 @@ public class MixInMemoryDB {
             }
         }
     }
+
+    private void batchFetchInsertRecords(List<Integer> ids) throws SQLException {
+        for (int i = 0; i < ids.size(); i += BATCH_SIZE) {
+            int end = Math.min(i + BATCH_SIZE, ids.size());
+            List<Integer> batch = ids.subList(i, end);
+
+            // Build SQL with placeholders (?, ?, ?, ...)
+            String placeholders = String.join(",", Collections.nCopies(batch.size(), "?"));
+            String sql = "SELECT id, attr1, attr2, attr3, attr4, attr5, attr6, attr7, attr8, attr9, sign " +
+                    "FROM inserts WHERE id IN (" + placeholders + ")";
+
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                for (int j = 0; j < batch.size(); j++) {
+                    stmt.setInt(j + 1, batch.get(j));
+                }
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        int[] record = new int[11];
+                        for (int k = 0; k < 11; k++) {
+                            record[k] = rs.getInt(k + 1);
+                        }
+                        insertRecordCache.put(record[0], record);
+                    }
+                }
+            }
+        }
+    }
+
 
 //
 //    private int[] fetchInsertRecordFromDB(int id) throws SQLException {
@@ -235,6 +305,54 @@ public class MixInMemoryDB {
         reader.close();
         return maxId;
     }
+
+    private void writeResiduRecord(BufferedWriter writer, StringBuilder sb, List<int[]> residu, int rid) throws IOException {
+        int[] record = residu.get(rid);
+        if (record[0] != rid + 1) {
+            throw new IllegalStateException("Record ID mismatch: expected " + (rid + 1) + ", got " + record[0]);
+        }
+        writeRecord(writer, sb, record, rid);
+    }
+
+    private void writeInsertRecord(BufferedWriter writer, StringBuilder sb, int rid) throws IOException {
+        int[] record = insertRecordCache.get(rid);
+        insertRecordCache.remove(rid);
+
+        if (record == null) {
+            throw new IllegalStateException("Insert record missing for ID: " + rid);
+        }
+        if (record[0] != rid) {
+            throw new IllegalStateException("Record ID mismatch: expected " + rid + ", got " + record[0]);
+        }
+        writeRecord(writer, sb, record, rid);
+    }
+
+    private void writeRecord(BufferedWriter writer, StringBuilder sb, int[] record, int rid) throws IOException {
+        sb.setLength(0);
+        for (int i = 0; i < record.length - 1; i++) {
+            sb.append(record[i]).append(',');
+        }
+
+        long sign = record[record.length - 1];
+        if (sign == -2) {
+            sb.append("1");
+        } else if (sign == 1) {
+            if (seen.add(rid)) {
+                sb.append("1");
+            } else {
+                sb.append("-1");
+                if (!seen.remove(rid)) {
+                    throw new IllegalStateException("ID " + rid + " was not in seen set but was marked as delete.");
+                }
+            }
+        } else {
+            throw new IllegalArgumentException("Unexpected sign value: " + sign);
+        }
+
+        writer.write(sb.toString());
+        writer.newLine();
+    }
+
 
     public static void main(String[] args) throws IOException, SQLException {
         String jsonFilePath = args[0];
