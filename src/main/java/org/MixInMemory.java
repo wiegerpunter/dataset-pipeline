@@ -14,9 +14,10 @@ public class MixInMemory {
     ArrayList<Integer> allRecordsId; // Not used, but kept for reference
 //    boolean[] hasBeenSeen;
     HashSet<Integer> seen;
+    double sizeFactor;
 
     public MixInMemory(Config config) throws IOException {
-        double sizeFactor = config.sizeFactor;
+        sizeFactor = config.sizeFactor;
         String synthRootFolderName = config.readFolder + "input/synthFromDisk/" + sizeFactor;
         System.out.println("synthRootFolder: " + synthRootFolderName);
 //        synthRootFolderName = synthRootFolderName.replace("./", ""); // Remove leading "./" if present
@@ -68,34 +69,51 @@ public class MixInMemory {
             boolean hasInserts = new File(insertFile).exists();
             System.out.printf("Processing folder: " + folder.getAbsolutePath());
             System.out.printf("Residu: " + residuFile);
-            if (hasInserts) System.out.println("Inserts: " + insertFile);
+            double perc= 0.0;
+            if (hasInserts) {
+                System.out.println("Inserts: " + insertFile);
+                perc = Double.parseDouble(insertFile.split("1.3_0_")[1].split(".csv")[0]);
+                System.out.println("Percentage of inserts: " + perc);
+            }
 
             // Create final stream file in parent folder
             String finalStreamFile = new File(folder.getParent(), "final_stream_spread_out" + suffix + ".csv").getAbsolutePath();
             finalStreamFile = finalStreamFile.replace("./", ""); // Remove leading "./" if present
             System.out.println("Final stream file: " + finalStreamFile);
-            mixFiles(residuFile, hasInserts ? insertFile : null, finalStreamFile);
+            mixFiles(residuFile, hasInserts ? insertFile : null, finalStreamFile, perc);
         }
     }
 
-    private void mixFiles(String residuFile, String insertFile, String finalStreamFile) throws IOException {
+    private void mixFiles(String residuFile, String insertFile, String finalStreamFile, double perc) throws IOException {
         // Estimate initial size to reduce resizing (arbitrary reasonable defaults)
 //        this.allRecords = new ArrayList<>(100_000);
-        this.allRecordsId = new ArrayList<>(100_000); // Not used, but kept for reference
-        ArrayList<int[]> inserts = new ArrayList<>();
+
+//        ArrayList<int[]> inserts = new ArrayList<>();
+        int insertSize = (int) (perc * Math.pow(2, sizeFactor));
+        int insertRecordSize = 10; // Assuming 10 attributes + sign
+        this.allRecordsId = new ArrayList<>((int) (2 * insertSize)); // Not used, but kept for reference
+        int[] inserts = new int[insertSize * insertRecordSize];
         ArrayList<int[]> residu = new ArrayList<>();
 
+        int maxResiduId = readDataset(residuFile, residu, false);
+        System.out.println("Read " + residu.size() + " residu records from: " + residuFile);
+        putInList(allRecordsId, residu);
         if (insertFile != null) {
-            readDataset(insertFile, inserts, true);
-            seen = new HashSet<>(inserts.size()); // Load factor consideration
-            putInList(allRecordsId, inserts);
-            putInList(allRecordsId, inserts);
+            readDatasetInserts(insertFile, inserts, true, insertRecordSize);
+            System.out.println("Read " + insertSize + " noise inserts from: " + insertFile);
+            seen = new HashSet<>(100); // Load factor consideration
+            System.out.println("Initialized seen set for noise inserts with size: " + seen.size());
+            putInListInserts(allRecordsId, inserts, insertRecordSize);
+            System.out.println("Put records in list");
+            allRecordsId.addAll(allRecordsId);
+            System.out.println("Twice");
         }
 
-        int maxResiduId = readDataset(residuFile, residu, false);
-        putInList(allRecordsId, residu);
 
+
+        System.out.println("Start shuffling records...");
         Collections.shuffle(allRecordsId);
+        System.out.println("Finished shuffling records. Total records: " + allRecordsId.size());
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(finalStreamFile))) {
             // Static header - no need to build this per iteration
@@ -107,7 +125,8 @@ public class MixInMemory {
                 if (rid <= maxResiduId) {
                     record = residu.get(rid);
                 } else {
-                    record = inserts.get(rid - maxResiduId - 1); // Adjust index for inserts
+                    System.arraycopy(inserts, (rid - maxResiduId - 1) * insertRecordSize, record = new int[insertRecordSize], 0, insertRecordSize);
+//                    record = inserts.get(rid - maxResiduId - 1); // Adjust index for inserts
                 }
                 //test:
                 if (record[0] != rid) {
@@ -154,6 +173,12 @@ public class MixInMemory {
                 throw new IllegalArgumentException("Record must have at least one element (ID).");
             }
             allRecordsId.add(record[0]); // Assuming ID is the first element
+        }
+    }
+
+    private void putInListInserts(ArrayList<Integer> allRecordsId, int[] inserts, int insertRecordSize) {
+        for (int i = 0; i < inserts.length; i += insertRecordSize) {
+            allRecordsId.add(inserts[i]); // Assuming ID is the first element
         }
     }
 
@@ -254,6 +279,72 @@ public class MixInMemory {
         reader.close();
         return maxId;
 //        while (line != null) {
+//            parts = line.split(",");
+//            long[] dataPoint = new long[parts.length]; // don't need sign.
+//            for (int i = 0; i < parts.length - 1; i++) {
+//                dataPoint[i] = Long.parseLong(parts[i]);
+//            }
+//            if (isNoise) {
+//                dataPoint[dataPoint.length - 1] = -3; // Set sign to -3 for noise inserts
+//            } else {
+//                dataPoint[dataPoint.length - 1] = -2; // Set sign to -2 for residu
+//            }
+//            dataset.add(dataPoint);
+//            line = reader.readLine();
+//        }
+//        reader.close();
+    }
+
+    public void readDatasetInserts(String filePath, int[] dataset, boolean isNoise, int noiseRecordSize) throws IOException {
+        BufferedReader reader = new BufferedReader(new FileReader(filePath));
+        int maxId = 0; // Track max ID for inserts
+        reader.readLine(); // Skip header line
+        String line;
+        boolean firstIsSet = false; // Track if first ID is set
+        int[] dataPoint = new int[noiseRecordSize];
+        int index = 0;
+        while ((line = reader.readLine()) != null) {
+            int length = line.length();
+//            int commaCount = 0;
+//            for (int i = 0; i < length; i++) {
+//                if (line.charAt(i) == ',') commaCount++;
+//            }
+            int partStart = 0;
+            int partIndex = 0;
+            for (int i = 0; i < length; i++) {
+                if (i == length - 1 || line.charAt(i) == ',') {
+//                    int partEnd = (line.charAt(i) == ',') ? i : i + 1;
+                    if (partIndex < noiseRecordSize) { // Ignore last column
+                        dataPoint[partIndex] = parseIntFast(line, partStart, i);
+                        partIndex++;
+                    }
+                    partStart = i + 1;
+                }
+            }
+//
+//            for (int i = 0; i < length; i++) {
+//                if (line.charAt(i) == ',' || i == length - 1) {
+//                    int partEnd = (line.charAt(i) == ',') ? i : i + 1;
+//                    if (partIndex < commas) { // Skip last column (sign replaced)
+//                        String numberStr = line.substring(partStart, partEnd);
+//                        dataPoint[partIndex] = Long.parseLong(numberStr);
+//                        partIndex++;
+//                    }
+//                    partStart = i + 1;
+//                }
+//            }
+
+            // Set last element manually based on isNoise
+            dataPoint[dataPoint.length - 1] = isNoise ? -3 : -2;
+            if (!isNoise && dataPoint[0] > maxId) {
+                maxId = (int) dataPoint[0]; // Update max ID for residu
+            }
+
+            System.arraycopy(dataPoint, 0, dataset, index, dataPoint.length);
+            index += dataPoint.length;
+        }
+        reader.close();
+        //        while (line != null) {
 //            parts = line.split(",");
 //            long[] dataPoint = new long[parts.length]; // don't need sign.
 //            for (int i = 0; i < parts.length - 1; i++) {

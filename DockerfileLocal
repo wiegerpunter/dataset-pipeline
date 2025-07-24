@@ -30,6 +30,7 @@ echo 'Step 3: Mix into final file' &&\
 java -Xmx28G -cp app.jar org.MixInMemory test.json &&\
 echo 'Done!'"
 
+
 #
 #ENV CLASSPATH=src
 #
