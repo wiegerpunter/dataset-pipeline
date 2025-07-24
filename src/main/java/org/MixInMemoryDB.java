@@ -7,22 +7,36 @@ import java.sql.*;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public class MixInMemoryDB {
     Connection conn;
     ArrayList<Integer> allRecordsId;
     HashSet<Integer> seen;
     double sizeFactor;
-    private final Map<Integer, InsertRef> insertRecordCache = new HashMap<>();
-    private final int BATCH_SIZE = 1000000;
+    private final Map<InsertRef, int[]> insertRecordCache = new HashMap<>();
+    private final int BATCH_SIZE = 100000;
 
     static class InsertRef {
-        int[] record;
+        int rid;
         int sign;
 
-        InsertRef(int sign, int[] record) {
+        InsertRef(int rid, int sign) {
             this.sign = sign;
-            this.record = record;
+            this.rid = rid;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof InsertRef)) return false;
+            InsertRef other = (InsertRef) o;
+            return rid == other.rid && sign == other.sign;  // include sign!
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(rid, sign);
         }
     }
 
@@ -31,7 +45,7 @@ public class MixInMemoryDB {
     public MixInMemoryDB(Config config) throws IOException, SQLException {
         sizeFactor = config.sizeFactor;
         conn = DriverManager.getConnection("jdbc:duckdb:" + config.readFolder + "tmp/mix_in_memory.db");
-        String synthRootFolderName = config.readFolder + "input/data/synthFromDisk/" + sizeFactor + "/9.0";
+        String synthRootFolderName = config.readFolder + "input/data/synthFromDisk/" + sizeFactor + "/29.0";
         System.out.println("synthRootFolder: " + synthRootFolderName);
 
         File synthRootFolder = new File(synthRootFolderName);
@@ -103,7 +117,7 @@ public class MixInMemoryDB {
         putInList(allRecordsId, residu);
 
 
-        Collections.shuffle(allRecordsId);
+        Collections.shuffle(allRecordsId, new Random(42)); // Shuffle to ensure randomness in the final stream
         prepareStatement();
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(finalStreamFile))) {
             writer.write("id,attr1,attr2,attr3,attr4,attr5,attr6,attr7,attr8,attr9,sign\n");
@@ -154,33 +168,44 @@ public class MixInMemoryDB {
 //            }
 
             int progress = 0;
-            List<Integer> processingBuffer = new ArrayList<>(BATCH_SIZE);
-            Set<Integer> insertIdsToFetch = new HashSet<>();
+            List<InsertRef> processingBuffer = new ArrayList<>(BATCH_SIZE);
+            List<InsertRef> insertIdsToFetch = new ArrayList<>();
 
             for (int i = 0; i < allRecordsId.size(); i++) {
                 int rid = allRecordsId.get(i);
-                processingBuffer.add(rid);
+                InsertRef insertRef = new InsertRef(rid, 1);
+                if (rid >= maxResiduId ) {
+                    if (seen.add(rid)) {
+                        insertRef.sign = 1;
+                    } else {
+                        if (!seen.remove(rid)) {
+                            throw new IllegalStateException("ID " + rid + " was not in seen set but was marked as delete.");
+                        }
+                        insertRef.sign = -1; // If already seen, mark as delete
+                    }
+                }
+                processingBuffer.add(insertRef);
 
-                if (rid > maxResiduId && !insertRecordCache.containsKey(rid)) {
-                    insertIdsToFetch.add(rid);
+                if (rid > maxResiduId) {
+                    insertIdsToFetch.add(insertRef);
                 }
 
                 if (processingBuffer.size() >= BATCH_SIZE || i == allRecordsId.size() - 1) {
                     // Fetch all needed insert records
                     if (!insertIdsToFetch.isEmpty()) {
-                        batchFetchInsertRecords(new ArrayList<>(insertIdsToFetch));
+                        batchFetchInsertRecords(insertIdsToFetch);
                         insertIdsToFetch.clear();
                     }
 
                     // Process everything in exact order
-                    for (int ridInBuffer : processingBuffer) {
+                    for (InsertRef ridInBuffer : processingBuffer) {
                         if (progress % 100000 == 0) {
                             System.out.printf("\rProcessed %d / %d records.", progress, allRecordsId.size());
                         }
                         progress++;
 
-                        if (ridInBuffer <= maxResiduId) {
-                            writeResiduRecord(writer, sb, residu, ridInBuffer);
+                        if (ridInBuffer.rid <= maxResiduId) {
+                            writeResiduRecord(writer, sb, residu, ridInBuffer.rid);
                         } else {
                             writeInsertRecord(writer, sb, ridInBuffer);
                         }
@@ -234,40 +259,49 @@ public class MixInMemoryDB {
         }
     }
 
-    private void batchFetchInsertRecords(List<Integer> ids) throws SQLException {
-        for (int i = 0; i < ids.size(); i += BATCH_SIZE) {
-            int end = Math.min(i + BATCH_SIZE, ids.size());
-            List<Integer> batch = ids.subList(i, end);
+    private void batchFetchInsertRecords(List<InsertRef> ids) throws SQLException {
+        List<Integer> batch = ids.stream()
+                .map(ref -> ref.rid)
+                .toList();
 
-            // Build SQL with placeholders (?, ?, ?, ...)
-            String placeholders = String.join(",", Collections.nCopies(batch.size(), "?"));
-            String sql = "SELECT id, attr1, attr2, attr3, attr4, attr5, attr6, attr7, attr8, attr9, sign " +
-                    "FROM inserts WHERE id IN (" + placeholders + ")";
+        // Step 1: Prepare unique IDs for query
+        Set<Integer> uniqueIds = new HashSet<>(batch);
+        String placeholders = String.join(",", Collections.nCopies(uniqueIds.size(), "?"));
+        String sql = "SELECT id, attr1, attr2, attr3, attr4, attr5, attr6, attr7, attr8, attr9, sign " +
+                "FROM inserts WHERE id IN (" + placeholders + ")";
 
-            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-                for (int j = 0; j < batch.size(); j++) {
-                    stmt.setInt(j + 1, batch.get(j));
-                }
+        // Step 2: Query only unique IDs
+        Map<Integer, int[]> fetchedRecords = new HashMap<>();
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            int paramIndex = 1;
+            for (int uid : uniqueIds) {
+                stmt.setInt(paramIndex++, uid);
+            }
 
-                try (ResultSet rs = stmt.executeQuery()) {
-                    while (rs.next()) {
-                        int[] record = new int[11];
-                        for (int k = 0; k < 11; k++) {
-                            record[k] = rs.getInt(k + 1);
-                        }
-                        int id = record[0];
-                        int sign;
-                        if (seen.add(id)) {
-                            sign = 1;
-                        } else {
-                            sign = -1;
-                        }
-                        insertRecordCache.put(id, new InsertRef(sign, record));
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    int[] record = new int[11];
+                    for (int k = 0; k < 11; k++) {
+                        record[k] = rs.getInt(k + 1);
                     }
+                    int id = record[0];
+                    fetchedRecords.put(id, record);
                 }
             }
         }
+
+        // Step 3: Walk original batch to assign correct sign and populate cache
+        for (InsertRef insertRef : ids) {
+            int[] record = fetchedRecords.get(insertRef.rid);
+            if (record == null) {
+                throw new IllegalStateException("Insert record missing for ID: " + insertRef.rid);
+            }
+
+            // Always store a fresh copy with the current sign
+            insertRecordCache.put(insertRef, record.clone());  // Use clone to avoid sharing references
+        }
     }
+
 
 
 //
@@ -333,16 +367,16 @@ public class MixInMemoryDB {
         writeRecord(writer, sb, record, 1);
     }
 
-    private void writeInsertRecord(BufferedWriter writer, StringBuilder sb, int rid) throws IOException {
-        InsertRef insertRef = insertRecordCache.remove(rid);
-        if (insertRef == null) {
-            throw new IllegalStateException("Insert record not found in cache for ID: " + rid);
+    private void writeInsertRecord(BufferedWriter writer, StringBuilder sb, InsertRef insertRef) throws IOException {
+        int[] record = insertRecordCache.remove(insertRef);
+        if (record == null) {
+            throw new IllegalStateException("Insert record not found in cache for ID: " + insertRef.rid +
+                    " with sign: " + insertRef.sign);
         }
-        if (insertRef.record[0] != rid) {
-            throw new IllegalStateException("Record ID mismatch: expected " + rid + ", got " + insertRef.record[0]);
+        if (record[0] != insertRef.rid) {
+            throw new IllegalStateException("Record ID mismatch: expected " + insertRef.rid + ", got " + record[0]);
         }
-
-        writeRecord(writer, sb, insertRef.record, insertRef.sign);
+        writeRecord(writer, sb, record, insertRef.sign);
 
     }
 

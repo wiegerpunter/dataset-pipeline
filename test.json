@@ -7,5 +7,5 @@
   "numQueries": 100,
   "zipfAlpha": 1.3,
   "sizeFactor": 23,
-  "perc": [9.0]
+  "perc": [0.33]
 }
