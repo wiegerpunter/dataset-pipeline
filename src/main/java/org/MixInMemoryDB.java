@@ -13,8 +13,19 @@ public class MixInMemoryDB {
     ArrayList<Integer> allRecordsId;
     HashSet<Integer> seen;
     double sizeFactor;
-    private final Map<Integer, int[]> insertRecordCache = new HashMap<>();
-    private final int BATCH_SIZE = 100000;
+    private final Map<Integer, InsertRef> insertRecordCache = new HashMap<>();
+    private final int BATCH_SIZE = 1000000;
+
+    static class InsertRef {
+        int[] record;
+        int sign;
+
+        InsertRef(int sign, int[] record) {
+            this.sign = sign;
+            this.record = record;
+        }
+    }
+
 
 
     public MixInMemoryDB(Config config) throws IOException, SQLException {
@@ -80,7 +91,7 @@ public class MixInMemoryDB {
         this.allRecordsId = new ArrayList<>((int) (2 * insertSize));
 
         if (insertFile != null) {
-            seen = new HashSet<>(100);
+            seen = new HashSet<>((int) (1000));
             loadInsertsIntoDuckDB(insertFile);
             putInListFromDB(allRecordsId);
             allRecordsId.addAll(allRecordsId);
@@ -178,10 +189,11 @@ public class MixInMemoryDB {
                 }
             }
 
-
-
-            if (seen != null && !seen.isEmpty()) {
+            if (!seen.isEmpty()) {
                 throw new IllegalStateException("Seen set should be empty after processing all records.");
+            }
+            if (!insertRecordCache.isEmpty()) {
+                throw new IllegalStateException("Insert record cache should be empty after processing all records.");
             }
         }
     }
@@ -243,7 +255,14 @@ public class MixInMemoryDB {
                         for (int k = 0; k < 11; k++) {
                             record[k] = rs.getInt(k + 1);
                         }
-                        insertRecordCache.put(record[0], record);
+                        int id = record[0];
+                        int sign;
+                        if (seen.add(id)) {
+                            sign = 1;
+                        } else {
+                            sign = -1;
+                        }
+                        insertRecordCache.put(id, new InsertRef(sign, record));
                     }
                 }
             }
@@ -311,40 +330,31 @@ public class MixInMemoryDB {
         if (record[0] != rid + 1) {
             throw new IllegalStateException("Record ID mismatch: expected " + (rid + 1) + ", got " + record[0]);
         }
-        writeRecord(writer, sb, record, rid);
+        writeRecord(writer, sb, record, 1);
     }
 
     private void writeInsertRecord(BufferedWriter writer, StringBuilder sb, int rid) throws IOException {
-        int[] record = insertRecordCache.get(rid);
-        insertRecordCache.remove(rid);
+        InsertRef insertRef = insertRecordCache.remove(rid);
+        if (insertRef == null) {
+            throw new IllegalStateException("Insert record not found in cache for ID: " + rid);
+        }
+        if (insertRef.record[0] != rid) {
+            throw new IllegalStateException("Record ID mismatch: expected " + rid + ", got " + insertRef.record[0]);
+        }
 
-        if (record == null) {
-            throw new IllegalStateException("Insert record missing for ID: " + rid);
-        }
-        if (record[0] != rid) {
-            throw new IllegalStateException("Record ID mismatch: expected " + rid + ", got " + record[0]);
-        }
-        writeRecord(writer, sb, record, rid);
+        writeRecord(writer, sb, insertRef.record, insertRef.sign);
+
     }
 
-    private void writeRecord(BufferedWriter writer, StringBuilder sb, int[] record, int rid) throws IOException {
+    private void writeRecord(BufferedWriter writer, StringBuilder sb, int[] record, int sign) throws IOException {
         sb.setLength(0);
         for (int i = 0; i < record.length - 1; i++) {
             sb.append(record[i]).append(',');
         }
-
-        long sign = record[record.length - 1];
-        if (sign == -2) {
+        if (sign == 1) {
             sb.append("1");
-        } else if (sign == 1) {
-            if (seen.add(rid)) {
-                sb.append("1");
-            } else {
-                sb.append("-1");
-                if (!seen.remove(rid)) {
-                    throw new IllegalStateException("ID " + rid + " was not in seen set but was marked as delete.");
-                }
-            }
+        } else if (sign ==-1) {
+            sb.append("-1");
         } else {
             throw new IllegalArgumentException("Unexpected sign value: " + sign);
         }
