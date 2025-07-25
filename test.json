@@ -5,7 +5,7 @@
   "numZipfAttributes": 9,
   "numUniformAttributes": 0,
   "numQueries": 100,
-  "zipfAlpha": 1.3,
+  "zipfAlpha": 1.1,
   "sizeFactor": 23,
-  "perc": [0.33]
+  "perc": [0.0,0.33,1.0,3.0,9.0]
 }

@@ -64,7 +64,7 @@ public class SyntheticDataset {
     private String setDatasetName(int numAttrs, int domain, double sizeFactor, int datasetSize,
                                   int numZipfianAttrs, double zipfAlpha, int numUniformAttrs,
                                   double perc) {
-        return config.readFolder + "/input/synthFromDisk/" + sizeFactor + "/" + perc + "/" + "syntheticDataset_" + numAttrs + "_" + domain + "_" + sizeFactor + "_" + datasetSize + "_" +
+        return config.readFolder + "/input/synthFromDisk/zipfAlpha_" + zipfAlpha + "/" + sizeFactor + "/" + perc + "/" + "syntheticDataset_" + numAttrs + "_" + domain + "_" + sizeFactor + "_" + datasetSize + "_" +
                 numZipfianAttrs + "_" + zipfAlpha + "_" + numUniformAttrs + "_" + perc + ".csv";
     }
 

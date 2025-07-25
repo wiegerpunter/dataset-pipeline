@@ -5,7 +5,7 @@
 #CONFIG_FILE="/app/split/config.json"
 #sizeFactor=$(jq -r '.sizeFactor | tostring' "$CONFIG_FILE")
 
-ROOT_FOLDER="./input/synthFromDisk/7.0"
+ROOT_FOLDER="/home/wieger/omni-deletes/input/synthFromDisk/zipfAlpha_1.1/23.0"
 echo "Using ROOT_FOLDER: $ROOT_FOLDER"
 
 set -e

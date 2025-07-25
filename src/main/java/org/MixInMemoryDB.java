@@ -45,7 +45,7 @@ public class MixInMemoryDB {
     public MixInMemoryDB(Config config) throws IOException, SQLException {
         sizeFactor = config.sizeFactor;
         conn = DriverManager.getConnection("jdbc:duckdb:" + config.readFolder + "tmp/mix_in_memory.db");
-        String synthRootFolderName = config.readFolder + "input/data/synthFromDisk/" + sizeFactor + "/29.0";
+        String synthRootFolderName = config.readFolder + "input/synthFromDisk/zipfAlpha_" + config.zipfAlpha + "/" + sizeFactor;
         System.out.println("synthRootFolder: " + synthRootFolderName);
 
         File synthRootFolder = new File(synthRootFolderName);
@@ -54,10 +54,10 @@ public class MixInMemoryDB {
         }
 
         Pattern pattern = Pattern.compile("residu(.*)\\.csv");
-        processFolderRecursively(synthRootFolder, pattern);
+        processFolderRecursively(synthRootFolder, pattern, config.zipfAlpha);
     }
 
-    private void processFolderRecursively(File folder, Pattern pattern) throws IOException, SQLException {
+    private void processFolderRecursively(File folder, Pattern pattern, double zipfAlpha) throws IOException, SQLException {
         System.out.println("Processing " + folder.getAbsolutePath());
         File[] files = folder.listFiles();
         if (files == null) return;
@@ -69,7 +69,7 @@ public class MixInMemoryDB {
 
         for (File file : files) {
             if (file.isDirectory()) {
-                processFolderRecursively(file, pattern);
+                processFolderRecursively(file, pattern, zipfAlpha);
             } else {
                 Matcher matcher = pattern.matcher(file.getName());
                 if (matcher.matches()) {
@@ -90,7 +90,7 @@ public class MixInMemoryDB {
             boolean hasInserts = new File(insertFile).exists();
             double perc = 0.0;
             if (hasInserts) {
-                perc = Double.parseDouble(insertFile.split("1.3_0_")[1].split(".csv")[0]);
+                perc = Double.parseDouble(insertFile.split(zipfAlpha + "_0_")[1].split(".csv")[0]);
             }
 
             String finalStreamFile = new File(folder.getParent(), "final_stream_spread_out" + suffix + ".csv").getAbsolutePath();

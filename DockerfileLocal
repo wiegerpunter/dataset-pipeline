@@ -3,15 +3,15 @@ WORKDIR /home/wieger/Documents/Research/DataGeneration
 
 COPY target/DataGeneration-1.0-SNAPSHOT.jar app.jar
 
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    bash \
-    jq \
-    coreutils \
-    findutils \
-    gawk \
-    && rm -rf /var/lib/apt/lists/*
+#
+#RUN apt-get update && \
+#    apt-get install -y --no-install-recommends \
+#    bash \
+#    jq \
+#    coreutils \
+#    findutils \
+#    gawk \
+#    && rm -rf /var/lib/apt/lists/*
 
 COPY test.json test.json
 COPY splitInsertsAndDeletesODC.sh splitInsertsAndDeletesODC.sh
