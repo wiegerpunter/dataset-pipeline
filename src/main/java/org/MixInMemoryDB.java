@@ -45,7 +45,7 @@ public class MixInMemoryDB {
     public MixInMemoryDB(Config config) throws IOException, SQLException {
         sizeFactor = config.sizeFactor;
         conn = DriverManager.getConnection("jdbc:duckdb:" + config.readFolder + "tmp/mix_in_memory.db");
-        String synthRootFolderName = config.readFolder + "input/synthFromDisk/zipfAlpha_" + config.zipfAlpha + "/" + sizeFactor;
+        String synthRootFolderName = config.readFolder + "input/data/synthFromDisk/" + sizeFactor+"/3.0";
         System.out.println("synthRootFolder: " + synthRootFolderName);
 
         File synthRootFolder = new File(synthRootFolderName);
