@@ -16,7 +16,7 @@ public class Config {
     public int numStoredAttributes;
     public String currentDate;
     public int domain;
-    public double sizeFactor;
+    public int sizeFactor;
     public double zipfAlpha;
     public double[] perc;
 
