@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org</groupId>
-    <artifactId>DataGeneration</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <artifactId>MixInMemory</artifactId>
+    <version>2.0-synthFromDisk</version>
 
     <properties>
         <maven.compiler.source>19</maven.compiler.source>
@@ -80,7 +80,7 @@
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>org.MixInMemoryTPCDSDB</mainClass>
+                                    <mainClass>org.MixInMemorysynthFromDiskDB</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>

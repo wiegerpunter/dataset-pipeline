@@ -8,7 +8,7 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class MixInMemoryCAIDADB {
+public class MixInMemorysynthFromDiskDB {
     Connection conn;
     ArrayList<Integer> allRecordsId;
     HashSet<Integer> seen;
@@ -40,10 +40,15 @@ public class MixInMemoryCAIDADB {
 
 
 
-    public MixInMemoryCAIDADB(Config config) throws IOException, SQLException {
+    public MixInMemorysynthFromDiskDB(Config config) throws IOException, SQLException {
         sizeFactor = config.sizeFactor;
-        conn = DriverManager.getConnection("jdbc:duckdb:" + config.readFolder + "tmp/mix_in_memory.db");
-        String synthRootFolderName = config.readFolder + "input/data/CAIDA/" + sizeFactor;
+        String dbPath = config.readFolder + "tmp/" + config.zipfAlpha + "/" + config.sizeFactor + "/mix_in_memory.db";
+        File dbFile = new File(dbPath);
+        if (!dbFile.getParentFile().exists() && !dbFile.getParentFile().mkdirs()) {
+            throw new IOException("Failed to create directory: " + dbFile.getParent());
+        }
+        conn = DriverManager.getConnection("jdbc:duckdb:" + dbPath);
+        String synthRootFolderName = config.readFolder + "input/data/synthFromDisk/" + config.numZipfAttributes + "/zipfAlpha_"+config.zipfAlpha+"/" + sizeFactor + ".0";
         System.out.println("synthRootFolder: " + synthRootFolderName);
 
         File synthRootFolder = new File(synthRootFolderName);
@@ -83,7 +88,7 @@ public class MixInMemoryCAIDADB {
 
                 if (insertFile.exists()) {
                     double perc = Double.parseDouble(percName);
-                    String finalStreamFile = new File(subfolder, "final_stream_" + percName + ".csv").getAbsolutePath();
+                    String finalStreamFile = new File(subfolder, "synth_final_stream_" + percName + ".csv").getAbsolutePath();
                     mixFiles(residuFile, insertFile.getAbsolutePath(), finalStreamFile, perc);
                 }
             }
@@ -110,7 +115,7 @@ public class MixInMemoryCAIDADB {
         Collections.shuffle(allRecordsId, new Random(42)); // Shuffle to ensure randomness in the final stream
         prepareStatement();
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(finalStreamFile))) {
-            writer.write("id,frametime,ipsrc,ipsrcnet,ipsrchost,ipdst,ipdstnet,ipdsthost,ipproto,sign\n");
+            writer.write("id,attr1,attr2,attr3,attr4,attr5,attr6,attr7,attr8,attr9,attr10,attr11,sign\n");
             StringBuilder sb = new StringBuilder(256);
 
             int progress = 0;
@@ -181,59 +186,19 @@ public class MixInMemoryCAIDADB {
             stmt.execute("DROP TABLE IF EXISTS inserts");
             stmt.execute("CREATE TABLE inserts (" +
                     "id INTEGER, " +
-                    "frametime BIGINT, " +
-                    "ipsrc BIGINT, " +
-                    "ipsrcnet BIGINT, " +
-                    "ipsrchost BIGINT, " +
-                    "ipdst BIGINT, " +
-                    "ipdstnet BIGINT, " +
-                    "ipdsthost BIGINT, " +
-                    "ipproto INTEGER, " +
+                    "attr1 INTEGER, " +
+                    "attr2 INTEGER, " +
+                    "attr3 INTEGER, " +
+                    "attr4 INTEGER, " +
+                    "attr5 INTEGER, " +
+                    "attr6 INTEGER, " +
+                    "attr7 INTEGER, " +
+                    "attr8 INTEGER, " +
+                    "attr9 INTEGER, " +
+                    "attr10 INTEGER, " +
+                    "attr11 INTEGER, " +
                     "sign INTEGER" +
                     ")");
-//            stmt.execute("SELECT * FROM read_csv_auto('/home/wieger/omni-deletes/input/data/tpc-ds/1000/3.0/3.0.csv', delim=',', header=true)");
-//            try (ResultSet rs = stmt.executeQuery("SELECT * FROM read_csv_auto('" + insertFile + "', delim=',', header=true)")) {
-//                while (rs.next()) {
-////                    System.out.println(rs.getString(1)); // or loop over columns
-//                    int id = rs.getInt("id");
-//                    long frametime = rs.getLong("frametime");
-//                    Long ipsrc = rs.getLong("ipsrc");
-//                    Long ipsrcnet = rs.getLong("ipsrcnet");
-//                    Long ipsrchost = rs.getLong("ipsrchost");
-//                    Long ipdst = rs.getLong("ipdst");
-//                    Long ipdstnet = rs.getLong("ipdstnet");
-//                    Long ipdsthost = rs.getLong("ipdsthost");
-//                    int ipproto = rs.getInt("ipproto");
-//                    int sign = rs.getInt("sign");
-//                    String insertSQL = "INSERT INTO inserts (id, frametime, ipsrc , ipsrcnet, ipsrchost, ipdst, ipdstnet, ipdsthost, ipproto, sign) " +
-//                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-//                    try (PreparedStatement insertStmt = conn.prepareStatement(insertSQL)) {
-//                        insertStmt.setInt(1, id);
-//                        insertStmt.setLong(2, frametime);
-//                        insertStmt.setObject(3, ipsrc != null ? ipsrc : null);
-//                        insertStmt.setObject(4, ipsrcnet != null ? ipsrcnet : null);
-//                        insertStmt.setObject(5, ipsrchost != null ? ipsrchost : null);
-//                        insertStmt.setObject(6, ipdst != null ? ipdst : null);
-//                        insertStmt.setObject(7, ipdstnet != null ? ipdstnet : null);
-//                        insertStmt.setObject(8, ipdsthost != null ? ipdsthost : null);
-//                        insertStmt.setInt(9, ipproto);
-//                        insertStmt.setInt(10, sign);
-//                        insertStmt.executeUpdate();
-//                    }
-//                }
-
-//
-//
-//            stmt.execute("DROP TABLE IF EXISTS inserts");
-//            stmt.execute("CREATE TABLE inserts (" +
-//                    "id INTEGER, " +
-//                    "c_salutation VARCHAR, " +
-//                    "c_first_name VARCHAR, " +
-//                    "c_last_name VARCHAR, " +
-//                    "c_birth_country VARCHAR, " +
-//                    "c_current_addr_sk INTEGER, " +
-//                    "sign INTEGER" +
-//                    ")");
             stmt.execute(String.format("COPY inserts FROM '%s' (DELIMITER ',', HEADER TRUE, NULL '', STRICT_MODE FALSE)", insertFile));
             stmt.execute("CREATE INDEX idx_inserts_id ON inserts (id)");
         }
@@ -241,23 +206,8 @@ public class MixInMemoryCAIDADB {
 
     private PreparedStatement fetchInsertStmt;
 
-    private String[] fetchInsertRecordFromDB(int id) throws SQLException {
-        fetchInsertStmt.setInt(1, id);
-        try (ResultSet rs = fetchInsertStmt.executeQuery()) {
-            if (rs.next()) {
-                String[] record = new String[7];
-                for (int i = 0; i < 7; i++) {
-                    record[i] = rs.getString(i + 1);
-                }
-                return record;
-            } else {
-                throw new IllegalArgumentException("Insert ID " + id + " not found in DuckDB.");
-            }
-        }
-    }
-
     private void prepareStatement() throws SQLException {
-        String sql = "SELECT id,frametime,ipsrc,ipsrcnet,ipsrchost,ipdst,ipdstnet,ipdsthost,ipproto,sign FROM inserts WHERE id = ?";
+        String sql = "SELECT id,attr1,attr2,attr3,attr4,attr5,attr6,attr7,attr8,attr9,attr10,attr11,sign FROM inserts WHERE id = ?";
         this.fetchInsertStmt = conn.prepareStatement(sql);
     }
 
@@ -269,7 +219,7 @@ public class MixInMemoryCAIDADB {
         }
 
         String placeholders = String.join(",", Collections.nCopies(uniqueIds.size(), "?"));
-        String sql = "SELECT id,frametime,ipsrc,ipsrcnet,ipsrchost,ipdst,ipdstnet,ipdsthost,ipproto,sign " +
+        String sql = "SELECT id,attr1,attr2,attr3,attr4,attr5,attr6,attr7,attr8,attr9,attr10,attr11,sign " +
                 "FROM inserts WHERE id IN (" + placeholders + ")";
 
         Map<Integer, String[]> fetchedRecords = new HashMap<>();
@@ -281,8 +231,8 @@ public class MixInMemoryCAIDADB {
 
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
-                    String[] record = new String[7];
-                    for (int j = 0; j < 7; j++) {
+                    String[] record = new String[13];
+                    for (int j = 0; j < 13; j++) {
                         record[j] = rs.getString(j + 1);
                     }
                     fetchedRecords.put(rs.getInt(1), record);
@@ -390,6 +340,13 @@ public class MixInMemoryCAIDADB {
         } else {
             throw new IllegalArgumentException("Unexpected sign value: " + sign);
         }
+        String line = sb.toString();
+        // 🔍 Check number of commas before writing
+        int commaCount = line.length() - line.replace(",", "").length();
+        if (commaCount != 12) {
+            System.err.println("⚠BAD LINE: " + line + " (commas: " + commaCount + ")");
+        }
+
 
         writer.write(sb.toString());
         writer.newLine();
@@ -402,7 +359,7 @@ public class MixInMemoryCAIDADB {
         Config config = mapper.readValue(new File(jsonFilePath), Config.class);
 
         try {
-            new MixInMemoryCAIDADB(config);
+            new MixInMemorysynthFromDiskDB(config);
         } catch (IOException | SQLException e) {
             e.printStackTrace();
         }

@@ -14,7 +14,7 @@ public class MixInMemoryTPCDSDB {
     HashSet<Integer> seen;
     int sizeFactor;
     private final Map<InsertRef, String[]> insertRecordCache = new HashMap<>();
-    private final int BATCH_SIZE = 1;
+    private final int BATCH_SIZE = 10000;
 
     static class InsertRef {
         int rid;
